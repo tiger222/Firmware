@@ -69,6 +69,8 @@ struct PositionControlStates {
  * 	priority over the feed-forward component.
  *
  * 	A setpoint that is NAN is considered as not set.
+ * 	If there is a position/velocity- and thrust-setpoint present, then
+ *  the thrust-setpoint is ommitted and recomputed from position-velocity-PID-loop.
  */
 class PositionControl : public ModuleParams
 {
@@ -94,8 +96,9 @@ public:
 	/**
 	 * Update the desired setpoints.
 	 * @param setpoint a vehicle_local_position_setpoint_s structure
+	 * @return true if setpoint has updated correctly
 	 */
-	void updateSetpoint(const vehicle_local_position_setpoint_s &setpoint);
+	bool updateSetpoint(const vehicle_local_position_setpoint_s &setpoint);
 
 	/**
 	 * Set constraints that are stricter than the global limits.
@@ -111,63 +114,98 @@ public:
 	 * @see _yawspeed_sp
 	 * @param dt the delta-time
 	 */
-	void generateThrustYawSetpoint(const float &dt);
+	void generateThrustYawSetpoint(const float dt);
 
 	/**
 	 * 	Set the integral term in xy to 0.
 	 * 	@see _thr_int
 	 */
-	void resetIntegralXY() {_thr_int(0) = _thr_int(1) = 0.0f;};
+	void resetIntegralXY() { _thr_int(0) = _thr_int(1) = 0.0f; }
 
 	/**
 	 * 	Set the integral term in z to 0.
 	 * 	@see _thr_int
 	 */
-	void resetIntegralZ() {_thr_int(2) = 0.0f;};
+	void resetIntegralZ() { _thr_int(2) = 0.0f; }
 
 	/**
 	 * 	Get the
 	 * 	@see _thr_sp
 	 * 	@return The thrust set-point member.
 	 */
-	matrix::Vector3f getThrustSetpoint() {return _thr_sp;}
+	const matrix::Vector3f &getThrustSetpoint() { return _thr_sp; }
 
 	/**
 	 * 	Get the
 	 * 	@see _yaw_sp
 	 * 	@return The yaw set-point member.
 	 */
-	float getYawSetpoint() { return _yaw_sp;}
+	const float &getYawSetpoint() { return _yaw_sp; }
 
 	/**
 	 * 	Get the
 	 * 	@see _yawspeed_sp
 	 * 	@return The yawspeed set-point member.
 	 */
-	float getYawspeedSetpoint() {return _yawspeed_sp;}
+	const float &getYawspeedSetpoint() { return _yawspeed_sp; }
 
 	/**
 	 * 	Get the
 	 * 	@see _vel_sp
-	 * 	@return The velocity set-point member.
+	 * 	@return The velocity set-point that was executed in the control-loop. Nan if velocity control-loop was skipped.
 	 */
-	matrix::Vector3f getVelSp() {return _vel_sp;}
+	const matrix::Vector3f getVelSp()
+	{
+		matrix::Vector3f vel_sp{};
+
+		for (int i = 0; i <= 2; i++) {
+			if (_ctrl_vel[i]) {
+				vel_sp(i) = _vel_sp(i);
+
+			} else {
+				vel_sp(i) = NAN;
+			}
+		}
+
+		return vel_sp;
+	}
 
 	/**
 	 * 	Get the
 	 * 	@see _pos_sp
-	 * 	@return The position set-point member.
+	 * 	@return The position set-point that was executed in the control-loop. Nan if the position control-loop was skipped.
 	 */
-	matrix::Vector3f getPosSp() {return _pos_sp;}
+	const matrix::Vector3f getPosSp()
+	{
+		matrix::Vector3f pos_sp{};
+
+		for (int i = 0; i <= 2; i++) {
+			if (_ctrl_pos[i]) {
+				pos_sp(i) = _pos_sp(i);
+
+			} else {
+				pos_sp(i) = NAN;
+			}
+		}
+
+		return pos_sp;
+	}
 
 protected:
 
 	void updateParams() override;
 
 private:
-	void _interfaceMapping(); /** maps set-points to internal member set-points */
+	/**
+	 * Maps setpoints to internal-setpoints.
+	 * @return true if mapping succeeded.
+	 */
+	bool _interfaceMapping();
+
 	void _positionController(); /** applies the P-position-controller */
 	void _velocityController(const float &dt); /** applies the PID-velocity-controller */
+	void _setCtrlFlagTrue(); /**< set control-loop flags to true (only required for logging) */
+	void _setCtrlFlagFalse(); /**< set control-loop flags to false (only required for logging) */
 
 	matrix::Vector3f _pos{}; /**< MC position */
 	matrix::Vector3f _vel{}; /**< MC velocity */
@@ -183,6 +221,8 @@ private:
 	matrix::Vector3f _thr_int{}; /**< thrust integral term */
 	vehicle_constraints_s _constraints{}; /**< variable constraints */
 	bool _skip_controller{false}; /**< skips position/velocity controller. true for stabilized mode */
+	bool _ctrl_pos[3] = {true, true, true}; /**< True if the control-loop for position was used */
+	bool _ctrl_vel[3] = {true, true, true}; /**< True if the control-loop for velocity was used */
 
 	DEFINE_PARAMETERS(
 		(ParamFloat<px4::params::MPC_THR_MAX>) MPC_THR_MAX,

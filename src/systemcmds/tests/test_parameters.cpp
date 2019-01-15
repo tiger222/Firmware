@@ -2,6 +2,7 @@
 
 #include <px4_defines.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 class ParameterTest : public UnitTest
 {
@@ -478,6 +479,12 @@ bool ParameterTest::exportImportAll()
 
 	if (result < 0) {
 		PX4_ERR("importing from '%s' failed (%i)", param_file_name, result);
+		return false;
+	}
+
+	// save
+	if (param_save_default() != PX4_OK) {
+		PX4_ERR("param_save_default failed");
 		return false;
 	}
 

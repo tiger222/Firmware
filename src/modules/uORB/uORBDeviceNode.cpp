@@ -33,14 +33,6 @@
 
 #include "uORBDeviceNode.hpp"
 
-#ifdef __PX4_NUTTX
-#define FILE_FLAGS(filp) filp->f_oflags
-#define FILE_PRIV(filp) filp->f_priv
-#else
-#define FILE_FLAGS(filp) filp->flags
-#define FILE_PRIV(filp) filp->priv
-#endif
-
 #include "uORBDeviceNode.hpp"
 #include "uORBUtils.hpp"
 #include "uORBManager.hpp"
@@ -49,9 +41,7 @@
 #include "uORBCommunicator.hpp"
 #endif /* ORB_COMMUNICATOR */
 
-using namespace device;
-
-uORB::DeviceNode::SubscriberData *uORB::DeviceNode::filp_to_sd(device::file_t *filp)
+uORB::DeviceNode::SubscriberData *uORB::DeviceNode::filp_to_sd(cdev::file_t *filp)
 {
 #ifndef __PX4_NUTTX
 
@@ -60,14 +50,15 @@ uORB::DeviceNode::SubscriberData *uORB::DeviceNode::filp_to_sd(device::file_t *f
 	}
 
 #endif
-	return (SubscriberData *)(FILE_PRIV(filp));
+	return (SubscriberData *)(filp->f_priv);
 }
 
-uORB::DeviceNode::DeviceNode(const struct orb_metadata *meta, const char *name, const char *path,
-			     int priority, unsigned int queue_size) :
-	CDev(name, path),
+uORB::DeviceNode::DeviceNode(const struct orb_metadata *meta, const uint8_t instance, const char *path,
+			     uint8_t priority, uint8_t queue_size) :
+	CDev(path),
 	_meta(meta),
-	_priority((uint8_t)priority),
+	_instance(instance),
+	_priority(priority),
 	_queue_size(queue_size)
 {
 }
@@ -80,12 +71,12 @@ uORB::DeviceNode::~DeviceNode()
 }
 
 int
-uORB::DeviceNode::open(device::file_t *filp)
+uORB::DeviceNode::open(cdev::file_t *filp)
 {
 	int ret;
 
 	/* is this a publisher? */
-	if (FILE_FLAGS(filp) == PX4_F_WRONLY) {
+	if (filp->f_oflags == PX4_F_WRONLY) {
 
 		/* become the publisher if we can */
 		lock();
@@ -114,7 +105,7 @@ uORB::DeviceNode::open(device::file_t *filp)
 	}
 
 	/* is this a new subscriber? */
-	if (FILE_FLAGS(filp) == PX4_F_RDONLY) {
+	if (filp->f_oflags == PX4_F_RDONLY) {
 
 		/* allocate subscriber data */
 		SubscriberData *sd = new SubscriberData{};
@@ -126,10 +117,7 @@ uORB::DeviceNode::open(device::file_t *filp)
 		/* If there were any previous publications, allow the subscriber to read them */
 		sd->generation = _generation - (_queue_size < _generation ? _queue_size : _generation);
 
-		/* set priority */
-		sd->set_priority(_priority);
-
-		FILE_PRIV(filp) = (void *)sd;
+		filp->f_priv = (void *)sd;
 
 		ret = CDev::open(filp);
 
@@ -143,7 +131,7 @@ uORB::DeviceNode::open(device::file_t *filp)
 		return ret;
 	}
 
-	if (FILE_FLAGS(filp) == 0) {
+	if (filp->f_oflags == 0) {
 		return CDev::open(filp);
 	}
 
@@ -152,7 +140,7 @@ uORB::DeviceNode::open(device::file_t *filp)
 }
 
 int
-uORB::DeviceNode::close(device::file_t *filp)
+uORB::DeviceNode::close(cdev::file_t *filp)
 {
 	/* is this the publisher closing? */
 	if (px4_getpid() == _publisher) {
@@ -177,7 +165,7 @@ uORB::DeviceNode::close(device::file_t *filp)
 }
 
 ssize_t
-uORB::DeviceNode::read(device::file_t *filp, char *buffer, size_t buflen)
+uORB::DeviceNode::read(cdev::file_t *filp, char *buffer, size_t buflen)
 {
 	SubscriberData *sd = (SubscriberData *)filp_to_sd(filp);
 
@@ -218,9 +206,6 @@ uORB::DeviceNode::read(device::file_t *filp, char *buffer, size_t buflen)
 		++sd->generation;
 	}
 
-	/* set priority */
-	sd->set_priority(_priority);
-
 	/*
 	 * Clear the flag that indicates that an update has been reported, as
 	 * we have just collected it.
@@ -233,7 +218,7 @@ uORB::DeviceNode::read(device::file_t *filp, char *buffer, size_t buflen)
 }
 
 ssize_t
-uORB::DeviceNode::write(device::file_t *filp, const char *buffer, size_t buflen)
+uORB::DeviceNode::write(cdev::file_t *filp, const char *buffer, size_t buflen)
 {
 	/*
 	 * Writes are legal from interrupt context as long as the
@@ -301,7 +286,7 @@ uORB::DeviceNode::write(device::file_t *filp, const char *buffer, size_t buflen)
 }
 
 int
-uORB::DeviceNode::ioctl(device::file_t *filp, int cmd, unsigned long arg)
+uORB::DeviceNode::ioctl(cdev::file_t *filp, int cmd, unsigned long arg)
 {
 	SubscriberData *sd = filp_to_sd(filp);
 
@@ -365,7 +350,7 @@ uORB::DeviceNode::ioctl(device::file_t *filp, int cmd, unsigned long arg)
 		return PX4_OK;
 
 	case ORBIOCGPRIORITY:
-		*(int *)arg = sd->priority();
+		*(int *)arg = get_priority();
 		return PX4_OK;
 
 	case ORBIOCSETQUEUESIZE:
@@ -400,8 +385,8 @@ uORB::DeviceNode::publish(const orb_metadata *meta, orb_advert_t handle, const v
 	uORB::DeviceNode *devnode = (uORB::DeviceNode *)handle;
 	int ret;
 
-	/* check if the device handle is initialized */
-	if ((devnode == nullptr) || (meta == nullptr)) {
+	/* check if the device handle is initialized and data is valid */
+	if ((devnode == nullptr) || (meta == nullptr) || (data == nullptr)) {
 		errno = EFAULT;
 		return PX4_ERROR;
 	}
@@ -493,7 +478,7 @@ int16_t uORB::DeviceNode::topic_unadvertised(const orb_metadata *meta, int prior
 #endif /* ORB_COMMUNICATOR */
 
 pollevent_t
-uORB::DeviceNode::poll_state(device::file_t *filp)
+uORB::DeviceNode::poll_state(cdev::file_t *filp)
 {
 	SubscriberData *sd = filp_to_sd(filp);
 
@@ -510,7 +495,7 @@ uORB::DeviceNode::poll_state(device::file_t *filp)
 void
 uORB::DeviceNode::poll_notify_one(px4_pollfd_struct_t *fds, pollevent_t events)
 {
-	SubscriberData *sd = filp_to_sd((device::file_t *)fds->priv);
+	SubscriberData *sd = filp_to_sd((cdev::file_t *)fds->priv);
 
 	/*
 	 * If the topic looks updated to the subscriber, go ahead and notify them.
@@ -605,12 +590,6 @@ out:
 bool
 uORB::DeviceNode::appears_updated(SubscriberData *sd)
 {
-
-	/* block if in simulation mode */
-	while (px4_sim_delay_enabled()) {
-		usleep(100);
-	}
-
 	/* assume it doesn't look updated */
 	bool ret = false;
 
@@ -769,7 +748,7 @@ int16_t uORB::DeviceNode::process_received_message(int32_t length, uint8_t *data
 	int16_t ret = -1;
 
 	if (length != (int32_t)(_meta->o_size)) {
-		PX4_ERR("Received DataLength[%d] != ExpectedLen[%d]", _meta->o_name, (int)length, (int)_meta->o_size);
+		PX4_ERR("Received '%s' with DataLength[%d] != ExpectedLen[%d]", _meta->o_name, (int)length, (int)_meta->o_size);
 		return PX4_ERROR;
 	}
 

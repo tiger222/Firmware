@@ -1,4 +1,4 @@
-#!nsh
+#!/bin/sh
 #
 # @name Typhoon H480 SITL
 #
@@ -7,16 +7,14 @@
 
 sh /etc/init.d/rc.mc_defaults
 
-if [ $AUTOCNF == yes ]
+if [ $AUTOCNF = yes ]
 then
-	param set MAV_TYPE 13
-
 	param set MC_PITCHRATE_P 0.1
 	param set MC_ROLLRATE_P 0.05
 	param set MPC_XY_VEL_I 0.2
 	param set MPC_XY_VEL_P 0.15
 
-	param set RTL_DESCEND_ALT 10.0
+	param set RTL_DESCEND_ALT 10
 	param set RTL_LAND_DELAY 0
 
 	param set TRIG_INTERFACE 3
@@ -25,5 +23,6 @@ then
 	param set MAV_PROTO_VER 2
 fi
 
-set MIXER hexa_x
+set MAV_TYPE 13
 
+set MIXER hexa_x

@@ -1,8 +1,8 @@
-#!nsh
+#!/bin/sh
 #
 # PX4IO interface init script.
 #
-if [ $USE_IO == yes -a $IO_PRESENT == yes ]
+if [ $USE_IO = yes -a $IO_PRESENT = yes ]
 then
 	if px4io start
 	then
@@ -13,6 +13,6 @@ then
 		px4io limit 400
 	else
 		echo "PX4IO start failed" >> $LOG_FILE
-		tune_control play -m ${TUNE_ERR}
+		tune_control play -t 20
 	fi
 fi

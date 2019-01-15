@@ -14,7 +14,7 @@ search_directory="$1"
 command -v shellcheck >/dev/null 2>&1 || { echo -e >&2 \
 "Error: shellcheck required but it's not installed. On Ubuntu use:\n sudo apt-get install shellcheck\n\nAborting."; exit 1; }
 
-scripts="$(find "$search_directory" -type f ! -name '*.txt' ! -name '*.mix')"
+scripts="$(find "$search_directory" -type f ! -name '*.txt' ! -name '*.mix' ! -name '*.bin')"
 
 echo "Running shellcheck in '$search_directory'."
 
@@ -24,7 +24,15 @@ echo "Running shellcheck in '$search_directory'."
 # SC2086: double quote to prevent globbing and word splitting
 # SC2166: allow the form [ $OUTPUT_MODE == fmu -o $OUTPUT_MODE == io ]
 # SC2148: allow files w/o shebang
-shellcheck -a -x -e SC2121 -e SC1008 -e SC2086 -e SC2166 -e SC2148 \
+# SC2039: In POSIX sh, array references are undefined. TODO: fix this
+shellcheck -x \
+	-e SC1008 \
+	-e SC2086 \
+	-e SC2121 \
+	-e SC2148 \
+	-e SC2166 \
+	-e SC2039 \
+	--shell=dash \
 	$scripts
 ret=$?
 if [ $ret -ne 0 ]; then
